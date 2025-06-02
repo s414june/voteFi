@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+	<head>
+		<meta charset="UTF-8" />
+		<title>費氏數列投票</title>
+		<style>
+			body {
+				font-family: sans-serif;
+				padding: 2em;
+			}
+			button,
+			input {
+				padding: 10px;
+				margin: 5px;
+				font-size: 16px;
+			}
+			.disabled {
+				background-color: #ccc;
+				cursor: not-allowed;
+			}
+			.results {
+				margin-top: 2em;
+			}
+		</style>
+	</head>
+	<body>
+		<h1>輸入你的名字並選擇一個數字</h1>
+
+		<div>
+			<input type="text" id="username" placeholder="請輸入你的名字" />
+			<button id="submitName">開始投票</button>
+		</div>
+
+		<div id="voteSection" style="display: none">
+			<h2>請選擇費氏數列中的一個數字</h2>
+			<div id="voteButtons"></div>
+		</div>
+
+		<div class="results">
+			<h2>投票結果：</h2>
+			<ul id="resultList"></ul>
+		</div>
+
+		<script>
+			const fibonacci = [1, 2, 3, 5, 8, 13, 21, 34, 55]
+			const voteButtons = document.getElementById("voteButtons")
+			const resultList = document.getElementById("resultList")
+			const voteSection = document.getElementById("voteSection")
+			const submitNameBtn = document.getElementById("submitName")
+			const usernameInput = document.getElementById("username")
+
+			const counts = {}
+			const buttons = {}
+
+			// 初始化票數 UI
+			fibonacci.forEach((num) => {
+				const btn = document.createElement("button")
+				btn.textContent = num
+				btn.id = `btn${num}`
+				btn.disabled = true
+				voteButtons.appendChild(btn)
+				buttons[num] = btn
+
+				const li = document.createElement("li")
+				li.innerHTML = `${num}：<span id="count${num}">0</span>`
+				resultList.appendChild(li)
+
+				counts[num] = document.getElementById(`count${num}`)
+			})
+
+			const ws = new WebSocket("ws://localhost:8080")
+
+			// 儲存於 sessionStorage：已投票的使用者名稱與選項
+			const storedUser = sessionStorage.getItem("votedUser")
+			if (storedUser) {
+				usernameInput.value = storedUser
+				usernameInput.disabled = true
+				submitNameBtn.disabled = true
+				voteSection.style.display = "block"
+				disableButtons()
+			}
+
+			submitNameBtn.addEventListener("click", () => {
+				const name = usernameInput.value.trim()
+				if (!name) return alert("請輸入名字")
+				sessionStorage.setItem("votedUser", name)
+				usernameInput.disabled = true
+				submitNameBtn.disabled = true
+				voteSection.style.display = "block"
+				enableButtons()
+			})
+
+			Object.entries(buttons).forEach(([num, btn]) => {
+				btn.addEventListener("click", () => {
+					const name = sessionStorage.getItem("votedUser")
+					const hasVoted = sessionStorage.getItem("voted")
+					if (!name || hasVoted) return
+
+					ws.send(
+						JSON.stringify({
+							action: "vote",
+							option: num,
+							username: name,
+						})
+					)
+
+					sessionStorage.setItem("voted", num)
+					disableButtons()
+				})
+			})
+
+			function disableButtons() {
+				Object.values(buttons).forEach((btn) => {
+					btn.disabled = true
+					btn.classList.add("disabled")
+				})
+			}
+
+			function enableButtons() {
+				const hasVoted = sessionStorage.getItem("voted")
+				if (!hasVoted) {
+					Object.values(buttons).forEach((btn) => {
+						btn.disabled = false
+						btn.classList.remove("disabled")
+					})
+				}
+			}
+
+			ws.onmessage = (event) => {
+				const data = JSON.parse(event.data)
+				if (data.action === "update") {
+					Object.entries(data.counts).forEach(([num, val]) => {
+						if (counts[num]) counts[num].textContent = val
+					})
+				}
+			}
+
+			ws.onopen = () => {
+				ws.send(JSON.stringify({ action: "init" }))
+			}
+
+			ws.onerror = () => {
+				alert("WebSocket 錯誤，請確認 server 是否有啟動")
+			}
+		</script>
+	</body>
+</html>
