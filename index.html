@@ -2,14 +2,15 @@
 <html lang="zh-Hant">
 	<head>
 		<meta charset="UTF-8" />
-		<title>費氏數列投票</title>
+		<title>多人動態投票系統</title>
 		<style>
 			body {
 				font-family: sans-serif;
 				padding: 2em;
 			}
+			input,
 			button,
-			input {
+			select {
 				padding: 10px;
 				margin: 5px;
 				font-size: 16px;
@@ -18,130 +19,172 @@
 				background-color: #ccc;
 				cursor: not-allowed;
 			}
-			.results {
-				margin-top: 2em;
+			.section {
+				margin-top: 1em;
 			}
 		</style>
 	</head>
 	<body>
-		<h1>輸入你的名字並選擇一個數字</h1>
+		<h1>動態投票系統</h1>
 
 		<div>
 			<input type="text" id="username" placeholder="請輸入你的名字" />
-			<button id="submitName">開始投票</button>
+			<input
+				type="text"
+				id="newTopicName"
+				placeholder="新增投票項目（不能重複）" />
+			<button id="createTopicBtn">➕ 建立新項目</button>
 		</div>
 
-		<div id="voteSection" style="display: none">
-			<h2>請選擇費氏數列中的一個數字</h2>
+		<div class="section">
+			<label for="topicSelect">選擇投票項目：</label>
+			<select id="topicSelect"></select>
+			<button id="enterTopicBtn">進入投票</button>
+			<button id="refreshBtn">🔄 刷新現況</button>
+		</div>
+
+		<div id="voteSection" class="section" style="display: none">
+			<h2 id="currentTopicTitle"></h2>
 			<div id="voteButtons"></div>
-		</div>
-
-		<div class="results">
-			<h2>投票結果：</h2>
 			<ul id="resultList"></ul>
 		</div>
 
 		<script>
 			const fibonacci = [1, 2, 3, 5, 8, 13, 21, 34, 55]
+
+			const usernameInput = document.getElementById("username")
+			const newTopicInput = document.getElementById("newTopicName")
+			const createTopicBtn = document.getElementById("createTopicBtn")
+			const topicSelect = document.getElementById("topicSelect")
+			const enterTopicBtn = document.getElementById("enterTopicBtn")
+			const refreshBtn = document.getElementById("refreshBtn")
+			const voteSection = document.getElementById("voteSection")
 			const voteButtons = document.getElementById("voteButtons")
 			const resultList = document.getElementById("resultList")
-			const voteSection = document.getElementById("voteSection")
-			const submitNameBtn = document.getElementById("submitName")
-			const usernameInput = document.getElementById("username")
+			const currentTopicTitle = document.getElementById("currentTopicTitle")
 
-			const counts = {}
-			const buttons = {}
+			let currentTopic = ""
+			let counts = {}
+			let buttons = {}
 
-			// 初始化票數 UI
-			fibonacci.forEach((num) => {
-				const btn = document.createElement("button")
-				btn.textContent = num
-				btn.id = `btn${num}`
-				btn.disabled = true
-				voteButtons.appendChild(btn)
-				buttons[num] = btn
+			createTopicBtn.onclick = () => {
+				const topicName = newTopicInput.value.trim()
+				if (!topicName) return alert("請輸入項目名稱")
 
-				const li = document.createElement("li")
-				li.innerHTML = `${num}：<span id="count${num}">0</span>`
-				resultList.appendChild(li)
-
-				counts[num] = document.getElementById(`count${num}`)
-			})
-
-			const ws = new WebSocket("ws://localhost:8080")
-
-			// 儲存於 sessionStorage：已投票的使用者名稱與選項
-			const storedUser = sessionStorage.getItem("votedUser")
-			if (storedUser) {
-				usernameInput.value = storedUser
-				usernameInput.disabled = true
-				submitNameBtn.disabled = true
-				voteSection.style.display = "block"
-				disableButtons()
+				fetch("/api/create-topic", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ topic: topicName }),
+				})
+					.then((res) => res.json())
+					.then((data) => {
+						if (data.success) {
+							newTopicInput.value = ""
+							loadTopics()
+						} else {
+							alert(data.message || "建立失敗")
+						}
+					})
 			}
 
-			submitNameBtn.addEventListener("click", () => {
-				const name = usernameInput.value.trim()
-				if (!name) return alert("請輸入名字")
-				sessionStorage.setItem("votedUser", name)
-				usernameInput.disabled = true
-				submitNameBtn.disabled = true
+			enterTopicBtn.onclick = () => {
+				const username = usernameInput.value.trim()
+				if (!username) return alert("請輸入你的名字")
+				currentTopic = topicSelect.value
+				if (!currentTopic) return alert("請選擇項目")
+
+				sessionStorage.setItem("username", username)
+				sessionStorage.setItem("selectedTopic", currentTopic)
+
+				renderTopic(currentTopic)
+				loadVoteCounts()
+			}
+
+			refreshBtn.onclick = loadVoteCounts
+
+			function renderTopic(topic) {
 				voteSection.style.display = "block"
-				enableButtons()
-			})
+				currentTopicTitle.textContent = `投票項目：${topic}`
+				voteButtons.innerHTML = ""
+				resultList.innerHTML = ""
+				buttons = {}
+				counts = {}
 
-			Object.entries(buttons).forEach(([num, btn]) => {
-				btn.addEventListener("click", () => {
-					const name = sessionStorage.getItem("votedUser")
-					const hasVoted = sessionStorage.getItem("voted")
-					if (!name || hasVoted) return
+				fibonacci.forEach((num) => {
+					const btn = document.createElement("button")
+					btn.textContent = num
+					btn.disabled = hasVoted(topic)
+					btn.classList.toggle("disabled", btn.disabled)
+					btn.addEventListener("click", () => vote(num))
+					voteButtons.appendChild(btn)
+					buttons[num] = btn
 
-					ws.send(
-						JSON.stringify({
-							action: "vote",
-							option: num,
-							username: name,
+					const li = document.createElement("li")
+					li.innerHTML = `${num}：<span id="count-${num}">0</span>`
+					resultList.appendChild(li)
+					counts[num] = document.getElementById(`count-${num}`)
+				})
+			}
+
+			function vote(option) {
+				const username = sessionStorage.getItem("username")
+				if (!username || !currentTopic) return
+
+				fetch("/api/vote", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ username, topic: currentTopic, option }),
+				}).then(() => {
+					sessionStorage.setItem(`voted_${currentTopic}`, option)
+					renderTopic(currentTopic)
+					loadVoteCounts()
+				})
+			}
+
+			function hasVoted(topic) {
+				return sessionStorage.getItem(`voted_${topic}`) !== null
+			}
+
+			function loadTopics() {
+				fetch("/api/topics")
+					.then((res) => res.json())
+					.then((topics) => {
+						topicSelect.innerHTML = ""
+						topics.forEach((topic) => {
+							const opt = document.createElement("option")
+							opt.value = topic
+							opt.textContent = topic
+							topicSelect.appendChild(opt)
 						})
-					)
+					})
+			}
 
-					sessionStorage.setItem("voted", num)
-					disableButtons()
-				})
+			function loadVoteCounts() {
+				if (!currentTopic) return
+				fetch("/api/votes")
+					.then((res) => res.json())
+					.then((allVotes) => {
+						const topicVotes = allVotes[currentTopic] || {}
+						Object.entries(topicVotes).forEach(([num, val]) => {
+							if (counts[num]) counts[num].textContent = val
+						})
+					})
+			}
+
+			// 初始化
+			loadTopics()
+
+			window.addEventListener("load", () => {
+				const username = sessionStorage.getItem("username")
+				const topic = sessionStorage.getItem("selectedTopic")
+				if (username) usernameInput.value = username
+				if (topic) {
+					currentTopic = topic
+					topicSelect.value = topic
+					renderTopic(topic)
+					loadVoteCounts()
+				}
 			})
-
-			function disableButtons() {
-				Object.values(buttons).forEach((btn) => {
-					btn.disabled = true
-					btn.classList.add("disabled")
-				})
-			}
-
-			function enableButtons() {
-				const hasVoted = sessionStorage.getItem("voted")
-				if (!hasVoted) {
-					Object.values(buttons).forEach((btn) => {
-						btn.disabled = false
-						btn.classList.remove("disabled")
-					})
-				}
-			}
-
-			ws.onmessage = (event) => {
-				const data = JSON.parse(event.data)
-				if (data.action === "update") {
-					Object.entries(data.counts).forEach(([num, val]) => {
-						if (counts[num]) counts[num].textContent = val
-					})
-				}
-			}
-
-			ws.onopen = () => {
-				ws.send(JSON.stringify({ action: "init" }))
-			}
-
-			ws.onerror = () => {
-				alert("WebSocket 錯誤，請確認 server 是否有啟動")
-			}
 		</script>
 	</body>
 </html>
