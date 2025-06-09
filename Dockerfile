@@ -1,38 +1,23 @@
-# syntax = docker/dockerfile:1
+# syntax=docker/dockerfile:1
+FROM node:14.21.3-slim
 
-# Adjust NODE_VERSION as desired
-ARG NODE_VERSION=14.21.3
-FROM node:${NODE_VERSION}-slim AS base
 LABEL fly_launch_runtime="Node.js"
 
-# Node.js app lives here
+# 設定工作目錄
 WORKDIR /app
 
-# Set production environment
-ENV NODE_ENV="production"
+# 設定 production 環境變數
+ENV NODE_ENV=production
 
-
-# Throw-away build stage to reduce size of final image
-FROM base AS build
-
-# Install packages needed to build node modules
-RUN apt-get update -qq && \
-    apt-get install --no-install-recommends -y build-essential node-gyp pkg-config python-is-python3
-
-# Install node modules
+# 複製必要檔案並安裝相依
 COPY .npmrc package.json ./
-RUN npm install
+RUN npm install --omit=dev
 
-# Copy application code
+# 複製整個應用程式碼（包含 server.js、templates、static 資源等）
 COPY . .
 
-
-# Final stage for app image
-FROM base
-
-# Copy built application
-COPY --from=build /app /app
-
-# Start the server by default, this can be overwritten at runtime
+# 開放 port
 EXPOSE 3000
+
+# 預設啟動指令
 CMD [ "npm", "run", "start" ]
