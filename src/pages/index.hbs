@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="zh-tw">
+
+<head>
+    <meta charset="utf-8" />
+    <title>匿名投票系統</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            padding: 1rem;
+        }
+
+        button.disabled {
+            opacity: 0.6;
+            pointer-events: none;
+        }
+    </style>
+    <link rel="stylesheet" href="/public/style.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body>
+    <h1>匿名動態投票系統</h1>
+    <p id="aliasLabel">註冊中...</p>
+
+    <div>
+        <input type="text" id="newTopicName" placeholder="新增投票項目" />
+        <button id="createTopicBtn">➕ 建立新項目</button>
+    </div>
+
+    <div class="section">
+        <label for="topicSelect">選擇投票項目：</label>
+        <select id="topicSelect"></select>
+        <button id="enterTopicBtn">進入投票</button>
+        <button id="refreshBtn">🔄 刷新現況</button>
+        <button id="downloadText">下載全部投票項目統計（文字）</button>
+    </div>
+
+    <div class="main">
+
+        <div id="voteSection" style="display: none">
+            <h2 id="currentTopicTitle"></h2>
+            <div id="voteButtons"></div>
+            <ul id="resultList"></ul>
+        </div>
+        <div class="section">
+            <span id="averageDisplay"></span>
+            <span id="nearestFibonacciDisplay"></span>
+            <h2>票數統計圖</h2>
+            <canvas id="voteChart" width="400" height="200"></canvas>
+            <div>
+                <button id="downloadImage">下載圖片</button>
+            </div>
+        </div>
+
+    </div>
+    <script>
+        const fibonacci = [1, 2, 3, 5, 8, 13, 21, 34, 55];
+        let alias = localStorage.getItem("alias");
+        let currentTopic = "";
+        let counts = {};
+        let buttons = {};
+
+        const newTopicInput = document.getElementById("newTopicName");
+        const createTopicBtn = document.getElementById("createTopicBtn");
+        const topicSelect = document.getElementById("topicSelect");
+        const enterTopicBtn = document.getElementById("enterTopicBtn");
+        const refreshBtn = document.getElementById("refreshBtn");
+        const voteSection = document.getElementById("voteSection");
+        const voteButtons = document.getElementById("voteButtons");
+        const resultList = document.getElementById("resultList");
+        const currentTopicTitle = document.getElementById("currentTopicTitle");
+        const aliasLabel = document.getElementById("aliasLabel");
+
+        // 初始化註冊身份
+        if (!alias) {
+            fetch("/api/register")
+                .then((res) => res.json())
+                .then((data) => {
+                    alias = data.alias;
+                    localStorage.setItem("alias", alias);
+                    aliasLabel.textContent = `你的代號：${alias}`;
+                });
+        } else {
+            aliasLabel.textContent = `你的代號：${alias}`;
+        }
+
+        createTopicBtn.onclick = () => {
+            const topicName = newTopicInput.value.trim();
+            if (!topicName) return alert("請輸入項目名稱");
+
+            fetch("/api/create-topic", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ topic: topicName }),
+            })
+                .then((res) => res.json())
+                .then((data) => {
+                    if (data.success) {
+                        newTopicInput.value = "";
+                        loadTopics();
+                    } else {
+                        alert(data.message || "建立失敗");
+                    }
+                });
+        };
+
+        enterTopicBtn.onclick = () => {
+            currentTopic = topicSelect.value;
+            if (!currentTopic) return alert("請選擇項目");
+            renderTopic(currentTopic);
+            loadVoteCounts();
+        };
+
+        refreshBtn.onclick = () => {
+            loadVoteCounts();
+            loadTopics();
+        };
+
+        function renderTopic(topic) {
+            voteSection.style.display = "block";
+            currentTopicTitle.textContent = `投票項目：${topic}`;
+            voteButtons.innerHTML = "";
+            resultList.innerHTML = "";
+            buttons = {};
+            counts = {};
+
+            fibonacci.forEach((num) => {
+                const btn = document.createElement("button");
+                btn.textContent = num;
+                btn.onclick = () => vote(num);
+                voteButtons.appendChild(btn);
+                buttons[num] = btn;
+
+                const li = document.createElement("li");
+                li.innerHTML = `${num}：<span id="count-${num}">0</span>`;
+                resultList.appendChild(li);
+                counts[num] = document.getElementById(`count-${num}`);
+            });
+        }
+
+        function vote(option) {
+            if (!alias || !currentTopic) return;
+            fetch("/api/vote", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ alias, topic: currentTopic, option }),
+            }).then(() => {
+                sessionStorage.setItem(`voted_${currentTopic}`, option);
+                renderTopic(currentTopic);
+                loadVoteCounts();
+            });
+        }
+
+        function hasVoted(topic) {
+            return sessionStorage.getItem(`voted_${topic}`) !== null;
+        }
+
+        function loadTopics() {
+            fetch("/api/topics")
+                .then((res) => res.json())
+                .then((topics) => {
+                    topicSelect.innerHTML = "";
+                    topics.forEach((topic) => {
+                        const opt = document.createElement("option");
+                        opt.value = topic;
+                        opt.textContent = topic;
+                        topicSelect.appendChild(opt);
+                    });
+                });
+        }
+
+
+
+        let chartInstance = null;
+
+        function updateChart(voteData) {
+            const labels = Object.keys(voteData).sort((a, b) => Number(a) - Number(b));
+            const counts = labels.map(k => voteData[k]);
+
+            const data = {
+                labels,
+                datasets: [
+                    {
+                        label: `「${currentTopic}」票數`,
+                        data: counts,
+                        backgroundColor: '#60a5fa',
+                    },
+                ],
+            };
+
+            const ctx = document.getElementById('voteChart').getContext('2d');
+
+            if (chartInstance) {
+                chartInstance.data = data;
+                chartInstance.update();
+            } else {
+                chartInstance = new Chart(ctx, {
+                    type: 'bar',
+                    data: data,
+                    options: {
+                        scales: {
+                            y: { beginAtZero: true },
+                        },
+                    },
+                });
+            }
+        }
+
+        document.getElementById('downloadImage').addEventListener('click', () => {
+            const link = document.createElement('a');
+            link.download = `${currentTopic}_chart.png`;
+            link.href = document.getElementById('voteChart').toDataURL('image/png');
+            link.click();
+        });
+
+        document.getElementById('downloadText').addEventListener('click', () => {
+            fetch("/api/votes")
+                .then(res => res.json())
+                .then(allVotes => {
+                    const report = generateAllTopicsReport(allVotes);
+
+                    const blob = new Blob([report], { type: 'text/plain' });
+                    const link = document.createElement('a');
+                    link.download = `全部投票統計.txt`;
+                    link.href = URL.createObjectURL(blob);
+                    link.click();
+                });
+        });
+
+
+
+
+        function loadVoteCounts() {
+            currentTopic = topicSelect.value;
+            if (!currentTopic) return;
+
+            fetch("/api/votes")
+                .then((res) => res.json())
+                .then((allVotes) => {
+                    const topicVotes = allVotes[currentTopic] || {};
+
+                    // 重新清空 resultList
+                    resultList.innerHTML = "";
+
+                    fibonacci.forEach((num) => {
+                        const count = topicVotes.votes[num] || 0;
+                        const voters = topicVotes.voters[num] || [];
+
+                        const li = document.createElement("li");
+                        li.innerHTML = `${num}：<span>${count}</span> ${voters.length ? `（${voters.join("、")}）` : ""
+                            }`;
+
+                        resultList.appendChild(li);
+                    });
+
+                    updateChart(topicVotes.votes);
+                    const avg = getTopicAverage(topicVotes);
+                    document.getElementById("averageDisplay").innerText = `平均值：${avg}`;
+
+                    const nearestFibonacci = findNearestFibonacci(avg);
+                    document.getElementById("nearestFibonacciDisplay").innerText = `(最接近${nearestFibonacci})`;
+
+                });
+        }
+
+        function getTopicAverage(topicData) {
+            const voters = topicData.voters || {};
+            let totalSum = 0;
+            let totalCount = 0;
+
+            for (const [numStr, voterList] of Object.entries(voters)) {
+                const num = Number(numStr);
+                const count = voterList.length;
+                totalSum += num * count;
+                totalCount += count;
+            }
+
+            return totalCount ? (totalSum / totalCount).toFixed(2) : "N/A";
+        }
+
+        function generateAllTopicsReport(allData) {
+            const lines = [];
+
+            for (const [topic, data] of Object.entries(allData)) {
+                const votes = data.votes || {};
+                const voters = data.voters || {};
+
+                let totalSum = 0;
+                let totalCount = 0;
+
+                for (const [numStr, voterList] of Object.entries(voters)) {
+                    const num = Number(numStr);
+                    const count = voterList.length;
+                    totalSum += num * count;
+                    totalCount += count;
+                }
+
+                const avg = totalCount ? (totalSum / totalCount).toFixed(2) : "N/A";
+                const _avg = `【${topic}】（平均：${avg}）`;
+                const nearestFibonacci = findNearestFibonacci(avg);
+                const _nearestFibonacci = `(最接近${nearestFibonacci})`;
+                lines.push(_avg + _nearestFibonacci);
+
+                const sortedKeys = Object.keys(votes).sort((a, b) => Number(a) - Number(b));
+                for (const key of sortedKeys) {
+                    const count = votes[key];
+                    const names = (voters[key] || []).join(", ");
+                    lines.push(`  ${key}：${count}票${names ? `（${names}）` : ""}`);
+                }
+
+                lines.push(""); // 空行
+            }
+
+            return lines.join("\n");
+        }
+
+        function findNearestFibonacci(value) {
+            let nearest = fibonacci[0];
+            let minDiff = Math.abs(value - nearest);
+
+            for (const num of fibonacci) {
+                const diff = Math.abs(value - num);
+                if (diff < minDiff) {
+                    minDiff = diff;
+                    nearest = num;
+                }
+            }
+
+            return nearest;
+        }
+
+        window.addEventListener("load", () => {
+            loadTopics();
+        });
+    </script>
+</body>
+
+</html>
