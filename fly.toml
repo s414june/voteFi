@@ -4,7 +4,7 @@
 #
 
 app = "votefi" 
-primary_region = "arn" # 依你地區選擇
+primary_region = "iad" # 依你地區選擇
 
 [build]
 
