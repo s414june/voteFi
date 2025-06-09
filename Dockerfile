@@ -17,7 +17,7 @@ RUN npm install --omit=dev
 COPY . .
 
 # 開放 port
-EXPOSE 3000
+EXPOSE 8080
 
 # 預設啟動指令
 CMD [ "npm", "run", "start" ]

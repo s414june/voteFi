@@ -5,7 +5,7 @@ const fastifyView = require("@fastify/view")
 const fastifyStatic = require("@fastify/static")
 const fastifyFormbody = require("@fastify/formbody")
 
-const PORT = process.env.PORT || 3000
+const PORT = process.env.PORT || 8080
 
 // === 資料儲存區 ===
 const fibonacci = [1, 2, 3, 5, 8, 13, 21, 34, 55]
